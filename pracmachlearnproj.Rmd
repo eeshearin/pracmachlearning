@@ -1,0 +1,127 @@
+---
+title: "Classifying Exercise"
+author: "Emma Shearin"
+date: "July 23, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Purpose
+
+Using previous data on the motions produced when bicep curls are performed properly or improperly, we want to predict from motion data whether or not a bicep curl is performed correctly.
+
+##Data Acquisition, Cleaning and Subsetting
+
+We need to download the files and load the packages we'll use for processing and prediction.
+
+```{r, results='hide'}
+library(caret)
+library(rattle)
+library(gridExtra)
+setwd("~/Desktop")
+training<-read.table("./pml-training.csv", header=TRUE, sep=",")
+testing<-read.table("./pml-testing.csv",header=TRUE, sep=",")
+```
+We also need to subset out and clean up the data, making sure to process both data sets, training and testing, in the same manner.
+```{r}
+# Training set
+trainingaccel <-grepl("^accel", names(training))
+trainingtotal <-grepl("^total", names(training))
+roll <-grepl("^roll", names(training))
+pitch <-grepl("^pitch", names(training))
+yaw <-grepl("^yaw", names(training))
+magnet <-grepl("^magnet", names(training))
+gyro <-grepl("^gyro", names(training))
+acceldata <-training[ ,trainingaccel]
+rolldata <-training[ ,roll]
+pitchdata <-training[ ,pitch]
+yawdata <-training[,yaw]
+magnetdata <-training[,magnet]
+gyrodata <-training[,gyro]
+totaldata <-training[,trainingtotal]
+trainClasse<-cbind(acceldata, rolldata, pitchdata, yawdata, magnetdata, gyrodata, totaldata, training[ ,160])
+colnames(trainClasse)[53]<-'Classe'
+
+# Test set
+testingaccel<-grepl("^accel", names(testing))
+testingtotal<-grepl("^total", names(testing))
+troll<-grepl("^roll", names(testing))
+tpitch<-grepl("^pitch", names(testing))
+tyaw<-grepl("^yaw", names(testing))
+tmagnet<-grepl("^magnet", names(testing))
+tgyro<-grepl("^gyro", names(testing))
+tacceldata<-testing[ ,testingaccel]
+trolldata<-testing[ ,troll]
+tpitchdata<-testing[,tpitch]
+tyawdata<-testing[,tyaw]
+tmagnetdata<-testing[,tmagnet]
+tgyrodata<-testing[,tgyro]
+ttotaldata<-testing[,testingtotal]
+testClasse<-cbind(tacceldata,trolldata,tpitchdata,tyawdata,tmagnetdata,tgyrodata,ttotaldata,testing[ ,160])
+colnames(testClasse)[53]<-'problem.id'
+```
+### Cross-Validation Subset
+In order to perform cross-validation,we need to make a subset of the training data. This is possible because the training data set is very large, 19622 observations on 160 variables.
+```{r}
+set.seed(400)
+inTrain = createDataPartition(trainClasse$Classe, p = .60)[[1]]
+trainingsubset = trainClasse[ inTrain,]
+testingsubset = trainClasse[-inTrain,]
+```
+
+## Modelling
+
+The data are categorical in terms of the desired outcome, so a linear model or related models would be impractical for this project. Instead, an rpart (single tree) model and a random forest (many trees) model will be compared for accuracy.
+
+### Rpart Model
+
+```{r}
+set.seed(400)
+modFit<-train(Classe~.,method="rpart", data=trainingsubset)
+print(modFit$finalModel)
+fancyRpartPlot(modFit$finalModel,cex=.5,under.cex=1,shadow.offset=0)
+classepredict=predict(modFit,testingsubset)
+confusionMatrix(testingsubset$Classe,classepredict)
+```
+
+The outcomes as based on the confusion matrix are not as definitive as one would initially believe seeing the plot. In testing this model on the cross validation subset, we see only a 54.6% accuracy, which is only slightly better than chance. The model is the least accurate for outcome D, the class in which the dumbell is lowered only halfway.
+
+### Random Forest Model
+
+As the rpart model was largely inaccurate and the outcome variable appears to have more nuances in variable selection as demonstrated in the rpart tree, a random forest model was tested to see if that method fit the data more accurately.
+
+```{r}
+set.seed(400)
+modFit2 <- train(Classe ~ ., method="rf", trControl = trainControl(method = "cv", number = 4), data = trainingsubset)
+print(modFit2)
+varImp(modFit2)
+classepredict2 <- predict(modFit2,testingsubset)
+confusionMatrix(testingsubset$Classe,classepredict2)
+```
+
+The random forest model has a 99.2% accuracy as shown in the Confusion Matrix, much better than the rpart method. The specificity and sensitivity is in the high 90s for all variables. For outcome C, the model is the least accurate, the outcome where the dumbbel was lifted only halfway. We could consider preprocessing within the model, but we would be really at the risk of overfitting the model because accuracy is already over 99%.
+
+## In-Sample error and Out-of-Sample Error
+The in-sample error is the error rate when the model is used to predict the training set we used to fit the model. This error is going to be lower than the error rate for the model predicting on another dataset (out of sample error). For the random forest model used as the final algorithm, the in sample error rate is 0; the model is 100% accurate. This could be a sign of overfitting, which is concerning for our out-of-sample error.
+
+```{r}
+insamplepredict <- predict(modFit2, trainingsubset)
+confusionMatrix(trainingsubset$Classe, insamplepredict)
+```
+
+Because we do not know the correct classes for the testing dataset, an out-of sample error rate can be approximated using the cross-validation subset.
+
+```{r}
+outsamplepredict <- predict(modFit2, testingsubset)
+confusionMatrix(testingsubset$Classe, outsamplepredict)
+```
+
+## Conclusions
+The Random Forest model was a much more accurate model for prediction of the exercise quality class as compared to our initial rpart model. The categories were dependent on various variables of the movement data and the interactions between these variables. Our RF model had over 99% accuracy in sample and fitted well to other subsamples of the data, such as the cross validation set. However, the algorithm may not have as high of accuracy on other samples like the testing sample, particularly samples with different weight lifters.
+
+In the first model, error class D was the most difficult to predict and in the second error C was the most difficult to predict. It makes sense why these two would be harder to predict as class C is lifting the dumbbell only halfway and class D is lowering the dumbbell only halfway. These movements may be hard to distinguish by the data collected from the bands.
+
+Overall, it is interesting to consider how monitors are affected by the quality of an exercise and are able to predict the error made. This is an important indicator for health and fitness as it is not just the quantity of exercise that can be collected and analyzed but also the quality.
